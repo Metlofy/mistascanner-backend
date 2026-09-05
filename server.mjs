@@ -175,8 +175,14 @@ app.get('/auth/callback', async (req, res) => {
         redirect_uri: `${BACKEND_URL}/auth/callback`,
       }),
     });
-    if (!tokenRes.ok && tokenRes.status === 403) {
-      throw new Error("Discord Cloudflare tarafindan Render IP'niz engellendi. Lutfen Discord API User-Agent ayarlarini kontrol edin: " + await tokenRes.text());
+    if (!tokenRes.ok) {
+      const text = await tokenRes.text();
+      throw new Error(`Discord API Hatasi (Status: ${tokenRes.status}): ${text.substring(0, 100)}...`);
+    }
+    const contentType = tokenRes.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await tokenRes.text();
+      throw new Error(`Discord JSON dondurmedi (Cloudflare Engeli Olabilir). Gelen yanit: ${text.substring(0, 100)}`);
     }
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) {
@@ -188,6 +194,15 @@ app.get('/auth/callback', async (req, res) => {
         'User-Agent': 'MistScanner (https://github.com/Metlofy, 1.0)'
       },
     });
+    if (!userRes.ok) {
+      const text = await userRes.text();
+      throw new Error(`Discord @me API Hatasi (Status: ${userRes.status}): ${text.substring(0, 100)}...`);
+    }
+    const userContentType = userRes.headers.get('content-type') || '';
+    if (!userContentType.includes('application/json')) {
+      const text = await userRes.text();
+      throw new Error(`Discord @me JSON dondurmedi. Gelen yanit: ${text.substring(0, 100)}`);
+    }
     const user = await userRes.json();
     if (!user.id) return res.redirect(`${DASHBOARD_URL}?auth_error=user_failed`);
     const sessionToken = crypto.randomBytes(32).toString('hex');
