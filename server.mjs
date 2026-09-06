@@ -872,16 +872,15 @@ app.post('/api/maintenance', requireAuth, requireOwner, async (req, res) => {
 const VIDEOS_DIR = path.join(__dirname, 'data', 'videos');
 mkdir(VIDEOS_DIR, { recursive: true }).catch(() => {});
 
-app.post('/api/scan/:pin/frames', requireClientSecret, async (req, res) => {
+app.post('/api/scan/:pin/video', requireClientSecret, express.raw({ type: '*/*', limit: '500mb' }), async (req, res) => {
   const { pin } = req.params;
-  const { frames } = req.body; // string[]  base64 PNG images
-  if (!Array.isArray(frames) || frames.length === 0) {
-    return res.status(400).json({ error: 'frames array required' });
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    return res.status(400).json({ error: 'Video buffer required' });
   }
   try {
-    const file = path.join(VIDEOS_DIR, `${pin}.json`);
-    await writeFile(file, JSON.stringify({ pin, frames, createdAt: new Date().toISOString() }), 'utf-8');
-    res.json({ ok: true, count: frames.length });
+    const file = path.join(VIDEOS_DIR, `${pin}.mp4`);
+    await writeFile(file, req.body);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -889,16 +888,79 @@ app.post('/api/scan/:pin/frames', requireClientSecret, async (req, res) => {
 
 app.get('/api/video/:pin', requireAuth, requireActiveKey, async (req, res) => {
   try {
-    const file = path.join(VIDEOS_DIR, `${req.params.pin}.json`);
-    const data = JSON.parse(await readFile(file, 'utf-8'));
-    // Verify the requester owns this scan
     const scan = await getScan(req.params.pin);
     if (scan && scan.creatorDiscordId && scan.creatorDiscordId !== req.user.discordId) {
       return res.status(403).json({ error: 'forbidden' });
     }
-    res.json(data);
+    const file = path.join(VIDEOS_DIR, `${req.params.pin}.mp4`);
+    res.sendFile(file);
   } catch {
     res.status(404).json({ error: 'no video for this pin' });
+  }
+});
+
+app.post('/api/scan/:pin/sandbox', requireClientSecret, express.raw({ type: '*/*', limit: '100mb' }), async (req, res) => {
+  const { pin } = req.params;
+  const filename = req.query.filename || 'sample.exe';
+  if (!Buffer.isBuffer(req.body)) return res.status(400).json({ error: 'No file' });
+
+  const TRIAGE_KEY = process.env.TRIAGE_API_KEY;
+  if (!TRIAGE_KEY) return res.status(500).json({ error: 'Triage API key not configured' });
+
+  try {
+    const fd = new FormData();
+    fd.append('file', new Blob([req.body]), filename);
+    fd.append('interactive', 'false');
+
+    const tRes = await fetch('https://api.tria.ge/v0/samples', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TRIAGE_KEY}` },
+      body: fd
+    });
+    if (!tRes.ok) throw new Error('Triage upload failed: ' + await tRes.text());
+    
+    const tData = await tRes.json();
+    const sampleId = tData.id;
+    
+    const scan = await getScan(pin);
+    if (scan) {
+      scan.sandbox = scan.sandbox || [];
+      scan.sandbox.push({ filename, sampleId, status: 'pending', uploadedAt: new Date().toISOString() });
+      await saveScan(pin, scan);
+    }
+    res.json({ ok: true, sampleId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/scan/:pin/sandbox', requireAuth, requireActiveKey, async (req, res) => {
+  const scan = await getScan(req.params.pin);
+  if (!scan || !scan.sandbox) return res.json({ samples: [] });
+  
+  const TRIAGE_KEY = process.env.TRIAGE_API_KEY;
+  if (!TRIAGE_KEY) return res.json({ samples: scan.sandbox });
+
+  try {
+    let updated = false;
+    for (let sample of scan.sandbox) {
+      if (sample.status !== 'reported') {
+        const sRes = await fetch(`https://api.tria.ge/v0/samples/${sample.sampleId}/summary`, {
+          headers: { 'Authorization': `Bearer ${TRIAGE_KEY}` }
+        });
+        if (sRes.ok) {
+          const sData = await sRes.json();
+          sample.status = sData.status;
+          sample.score = sData.score || sample.score;
+          sample.reportUrl = `https://tria.ge/${sample.sampleId}`;
+          updated = true;
+        }
+      }
+    }
+    if (updated) await saveScan(req.params.pin, scan);
+    res.json({ samples: scan.sandbox });
+  } catch (e) {
+    res.json({ samples: scan.sandbox });
   }
 });
 
