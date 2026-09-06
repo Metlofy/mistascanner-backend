@@ -864,10 +864,10 @@ app.post('/api/maintenance', requireAuth, requireOwner, async (req, res) => {
   res.json({ ok: true, enabled: !!enabled });
 });
 
-// ---- Screenshot/Video Upload -----------------------------------------------
-// C# client sends: { pin, clientSecret, frames: ["base64...", ...] }
-// We store them under data/videos/<pin>.json as raw base64 array.
-// The dashboard hits GET /api/video/:pin to retrieve and build a timelapse.
+// ---- Video Upload --------------------------------------------------------
+// C# client sends raw mp4 binary data via POST /api/scan/:pin/video
+// We store it under data/videos/<pin>.mp4
+// The dashboard hits GET /api/video/:pin to retrieve the mp4 file.
 
 const VIDEOS_DIR = path.join(__dirname, 'data', 'videos');
 mkdir(VIDEOS_DIR, { recursive: true }).catch(() => {});
