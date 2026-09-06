@@ -354,6 +354,13 @@ app.get('/api/keys/my', requireAuth, async (req, res) => {
   res.json({ key: myKey ?? null });
 });
 
+// ---- Health Check --------------------------------------------------------
+// Keep-alive ping'inin çalışması için gerekli.
+// Render ücretsiz planda 15 dk'da uyuduğu için her 14 dk'da bir buraya ping atılır.
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
 // ---- Client API (Scanner) ------------------------------------------------
 
 app.post('/api/scan', scanLimiter, requireClientSecret, async (req, res) => {
